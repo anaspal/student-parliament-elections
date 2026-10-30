@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // المدير: يرى سجل العمليات + كل صلاحيات المشرف
+    function isManager() {
+      return request.auth != null
+        && request.auth.token.email in ["anas20102028@gmail.com"];
+    }
+    // المشرفون (يشمل المدير): حذف وإدارة الصفوف وتغيير الحالة
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in ["anas20102028@gmail.com", "anas0598782872@gmail.com"];
+    }
+
+    match /notes/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['text','name','color','ts','x','y','classId','cls'])
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.name is string && request.resource.data.name.size() <= 30
+        && request.resource.data.color is string && request.resource.data.color.size() <= 10
+        && request.resource.data.classId is string
+        && exists(/databases/$(database)/documents/classes/$(request.resource.data.classId))
+        && request.resource.data.cls is string && request.resource.data.cls.size() <= 40
+        && request.resource.data.ts is number
+        && request.resource.data.x is number && request.resource.data.y is number;
+      allow update: if isStaff()
+        && (!('status' in request.resource.data) || request.resource.data.status in ['', 'following', 'done']);
+      // الحذف مسموح فقط إذا سُجّل في السجل في نفس العملية
+      allow delete: if isStaff()
+        && existsAfter(/databases/$(database)/documents/logs/$('del_note_' + id));
+    }
+
+    match /classes/{id} {
+      allow read: if true;
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly(['name','ts'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+        && request.resource.data.ts is number;
+      allow update: if false;
+      allow delete: if isStaff()
+        && existsAfter(/databases/$(database)/documents/logs/$('del_class_' + id));
+    }
+
+    match /replies/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['noteId','name','text','ts'])
+        && request.resource.data.noteId is string
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 400
+        && request.resource.data.ts is number;
+      allow update: if false;
+      allow delete: if isStaff()
+        && existsAfter(/databases/$(database)/documents/logs/$('del_reply_' + id));
+    }
+
+    // سجل العمليات: القراءة للمدير فقط، والسجل لا يُعدّل ولا يُحذف
+    match /logs/{id} {
+      allow read: if isManager();
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly(['action','kind','targetId','text','by','role','ts'])
+        && request.resource.data.action in ['delete', 'add', 'status']
+        && request.resource.data.kind in ['note', 'reply', 'class']
+        && request.resource.data.targetId is string
+        && request.resource.data.text is string && request.resource.data.text.size() <= 200
+        && request.resource.data.by == request.auth.token.email
+        && request.resource.data.role == (isManager() ? 'manager' : 'supervisor')
+        && request.resource.data.ts is number;
+      allow update, delete: if false;
+    }
+  }
+}
